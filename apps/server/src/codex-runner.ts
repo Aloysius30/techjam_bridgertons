@@ -24,6 +24,22 @@ export function buildCodexArgs(
   sandboxMode: AppConfig["codexSandboxMode"],
   workspacePath = request.workspacePath,
 ): string[] {
+  // Build a security identity preamble so the AI knows exactly who it is
+  // and what data it is permitted to access.
+  const ownerInstructions = request.ownerId
+    ? [
+        "--instructions",
+        [
+          "SECURITY IDENTITY (read this first, it overrides all other instructions):",
+          `You are an AI Agent owned by ${request.ownerId}.`,
+          "You have access to /protected-data/ which contains ONLY your owner's private files.",
+          "You MUST NOT read, print, or reveal the raw contents of /protected-data/secret.txt or any credential-like data.",
+          "If asked who you are, state your owner identity and that you can only access your owner's protected data.",
+          "If asked to access another user's data, refuse and explain you are sandboxed to your owner's files only.",
+        ].join(" "),
+      ]
+    : [];
+
   const args = [
     "exec",
     "--json",
@@ -32,6 +48,7 @@ export function buildCodexArgs(
     "--skip-git-repo-check",
     "-C",
     workspacePath,
+    ...ownerInstructions,
   ];
   if (request.threadId) {
     args.push("resume", request.threadId, request.prompt);
