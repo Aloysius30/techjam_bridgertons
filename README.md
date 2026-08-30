@@ -111,7 +111,7 @@ all clean.)
 
 - imbryan23
 - Aloysius30
-- (2 more — TBD)
+- (TBD)
 
 ## Architecture
 
