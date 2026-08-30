@@ -59,25 +59,27 @@ async function makeService(runner: AgentRunner = new FakeRunner()): Promise<Agen
 describe("Agent lifecycle", () => {
   it("creates, updates, stops, starts and deletes an Agent", async () => {
     const service = await makeService();
-    const agent = await service.createAgent({ name: "Builder" });
-    expect(service.listAgents()).toHaveLength(1);
-    expect((await service.updateAgent(agent.id, { description: "Builds apps" })).description)
-      .toBe("Builds apps");
-    expect((await service.stopAgent(agent.id)).status).toBe("stopped");
-    expect((await service.startAgent(agent.id)).status).toBe("ready");
-    await service.deleteAgent(agent.id);
-    expect(service.listAgents()).toHaveLength(0);
+    const agent = await service.createAgent({ name: "Builder", ownerId: "user-a" });
+    expect(service.listAgents("user-a")).toHaveLength(1);
+    expect(
+      (await service.updateAgent(agent.id, "user-a", { description: "Builds apps" }))
+        .description,
+    ).toBe("Builds apps");
+    expect((await service.stopAgent(agent.id, "user-a")).status).toBe("stopped");
+    expect((await service.startAgent(agent.id, "user-a")).status).toBe("ready");
+    await service.deleteAgent(agent.id, "user-a");
+    expect(service.listAgents("user-a")).toHaveLength(0);
   });
 
   it("persists a playground conversation", async () => {
     const service = await makeService();
-    const agent = await service.createAgent({ name: "Coder" });
-    const { run } = await service.sendMessage(agent.id, "write hello world");
+    const agent = await service.createAgent({ name: "Coder", ownerId: "user-a" });
+    const { run } = await service.sendMessage(agent.id, "user-a", "write hello world");
     await expect.poll(() => service.getRun(run.id).status).toBe("completed");
-    const messages = service.getMessages(agent.id);
+    const messages = service.getMessages(agent.id, "user-a");
     expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(messages[1]?.content).toContain("write hello world");
-    expect(service.getAgent(agent.id).codexThreadId).toBe("fake-thread");
+    expect(service.getAgent(agent.id, "user-a").codexThreadId).toBe("fake-thread");
   });
 
   it("atomically accepts only one concurrent run per Agent", async () => {
@@ -91,16 +93,16 @@ describe("Agent lifecycle", () => {
       isAvailable: async () => true,
     };
     const service = await makeService(runner);
-    const agent = await service.createAgent({ name: "Concurrent" });
+    const agent = await service.createAgent({ name: "Concurrent", ownerId: "user-a" });
     const attempts = await Promise.allSettled([
-      service.sendMessage(agent.id, "first"),
-      service.sendMessage(agent.id, "second"),
+      service.sendMessage(agent.id, "user-a", "first"),
+      service.sendMessage(agent.id, "user-a", "second"),
     ]);
 
     expect(attempts.filter((attempt) => attempt.status === "fulfilled")).toHaveLength(1);
     const rejected = attempts.find((attempt) => attempt.status === "rejected");
     expect(rejected).toMatchObject({ reason: { statusCode: 409 } });
-    expect(service.getMessages(agent.id)).toHaveLength(1);
+    expect(service.getMessages(agent.id, "user-a")).toHaveLength(1);
 
     finish({ output: "done", threadId: "thread", usage: null });
     const accepted = attempts.find((attempt) => attempt.status === "fulfilled");
@@ -119,15 +121,63 @@ describe("Agent lifecycle", () => {
       cancel: async () => false,
       isAvailable: async () => true,
     });
-    const agent = await service.createAgent({ name: "Busy" });
-    const { run } = await service.sendMessage(agent.id, "first");
+    const agent = await service.createAgent({ name: "Busy", ownerId: "user-a" });
+    const { run } = await service.sendMessage(agent.id, "user-a", "first");
 
-    await expect(service.startAgent(agent.id)).rejects.toMatchObject({ statusCode: 409 });
-    await expect(service.sendMessage(agent.id, "second")).rejects.toMatchObject({
+    await expect(service.startAgent(agent.id, "user-a")).rejects.toMatchObject({
+      statusCode: 409,
+    });
+    await expect(service.sendMessage(agent.id, "user-a", "second")).rejects.toMatchObject({
       statusCode: 409,
     });
 
     finish({ output: "done", threadId: "thread", usage: null });
     await expect.poll(() => service.getRun(run.id).status).toBe("completed");
+  });
+});
+
+describe("Ownership isolation", () => {
+  it("lets an owner access their own Agent but blocks other users with 403", async () => {
+    const service = await makeService();
+    const agent = await service.createAgent({ name: "Owned by A", ownerId: "user-a" });
+
+    expect(service.getAgent(agent.id, "user-a").id).toBe(agent.id);
+
+    expect(() => service.getAgent(agent.id, "user-b")).toThrowError(
+      expect.objectContaining({ statusCode: 403 }),
+    );
+    await expect(
+      service.updateAgent(agent.id, "user-b", { description: "hijacked" }),
+    ).rejects.toMatchObject({ statusCode: 403 });
+    await expect(service.startAgent(agent.id, "user-b")).rejects.toMatchObject({
+      statusCode: 403,
+    });
+    await expect(service.stopAgent(agent.id, "user-b")).rejects.toMatchObject({
+      statusCode: 403,
+    });
+    expect(() => service.getMessages(agent.id, "user-b")).toThrowError(
+      expect.objectContaining({ statusCode: 403 }),
+    );
+    expect(() => service.getRuns(agent.id, "user-b")).toThrowError(
+      expect.objectContaining({ statusCode: 403 }),
+    );
+    await expect(service.sendMessage(agent.id, "user-b", "hi")).rejects.toMatchObject({
+      statusCode: 403,
+    });
+    await expect(service.deleteAgent(agent.id, "user-b")).rejects.toMatchObject({
+      statusCode: 403,
+    });
+  });
+
+  it("only lists a user's own Agents", async () => {
+    const service = await makeService();
+    await service.createAgent({ name: "A's agent", ownerId: "user-a" });
+    await service.createAgent({ name: "B's agent", ownerId: "user-b" });
+
+    const forA = service.listAgents("user-a");
+    const forB = service.listAgents("user-b");
+
+    expect(forA.map((agent) => agent.name)).toEqual(["A's agent"]);
+    expect(forB.map((agent) => agent.name)).toEqual(["B's agent"]);
   });
 });

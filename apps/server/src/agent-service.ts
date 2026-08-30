@@ -46,16 +46,20 @@ export class AgentService {
     });
   }
 
-  listAgents(): Agent[] {
+  listAgents(userId: string): Agent[] {
     return this.store
       .snapshot()
-      .agents.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+      .agents.filter((agent) => agent.ownerId === userId)
+      .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
   }
 
-  getAgent(id: string): Agent {
+  getAgent(id: string, userId: string): Agent {
     const agent = this.store.snapshot().agents.find((item) => item.id === id);
     if (!agent) {
       throw new HttpError(404, "Agent not found");
+    }
+    if (agent.ownerId !== userId) {
+      throw new HttpError(403, "You do not have access to this Agent");
     }
     return agent;
   }
@@ -65,6 +69,7 @@ export class AgentService {
     const id = randomUUID();
     const agent: Agent = {
       id,
+      ownerId: input.ownerId,
       name: input.name.trim(),
       description: input.description?.trim() ?? "",
       instructions: input.instructions?.trim() ?? "",
@@ -80,8 +85,8 @@ export class AgentService {
     return agent;
   }
 
-  async updateAgent(id: string, input: UpdateAgentInput): Promise<Agent> {
-    const current = this.getAgent(id);
+  async updateAgent(id: string, userId: string, input: UpdateAgentInput): Promise<Agent> {
+    const current = this.getAgent(id, userId);
     if (current.status === "busy") {
       throw new HttpError(409, "Stop the active run before editing this Agent");
     }
@@ -89,6 +94,9 @@ export class AgentService {
       const agent = database.agents.find((item) => item.id === id);
       if (!agent) {
         throw new HttpError(404, "Agent not found");
+      }
+      if (agent.ownerId !== userId) {
+        throw new HttpError(403, "You do not have access to this Agent");
       }
       if (agent.status === "busy") {
         throw new HttpError(409, "Stop the active run before editing this Agent");
@@ -104,8 +112,8 @@ export class AgentService {
     return updated;
   }
 
-  async deleteAgent(id: string): Promise<{ archivedWorkspace: string }> {
-    const agent = this.getAgent(id);
+  async deleteAgent(id: string, userId: string): Promise<{ archivedWorkspace: string }> {
+    const agent = this.getAgent(id, userId);
     await this.cancelExecution(id);
     const archivedWorkspace = await this.workspaces.archive(agent);
     await this.store.mutate((database) => {
@@ -116,18 +124,19 @@ export class AgentService {
     return { archivedWorkspace };
   }
 
-  async startAgent(id: string): Promise<Agent> {
-    return this.setStatus(id, "ready");
+  async startAgent(id: string, userId: string): Promise<Agent> {
+    this.getAgent(id, userId);
+    return this.setStatus(id, userId, "ready");
   }
 
-  async stopAgent(id: string): Promise<Agent> {
-    this.getAgent(id);
+  async stopAgent(id: string, userId: string): Promise<Agent> {
+    this.getAgent(id, userId);
     await this.cancelExecution(id);
-    return this.setStatus(id, "stopped");
+    return this.setStatus(id, userId, "stopped");
   }
 
-  getMessages(agentId: string): Message[] {
-    this.getAgent(agentId);
+  getMessages(agentId: string, userId: string): Message[] {
+    this.getAgent(agentId, userId);
     return this.store
       .snapshot()
       .messages.filter((message) => message.agentId === agentId)
@@ -142,8 +151,8 @@ export class AgentService {
     return run;
   }
 
-  getRuns(agentId: string): AgentRun[] {
-    this.getAgent(agentId);
+  getRuns(agentId: string, userId: string): AgentRun[] {
+    this.getAgent(agentId, userId);
     return this.store
       .snapshot()
       .runs.filter((run) => run.agentId === agentId)
@@ -152,6 +161,7 @@ export class AgentService {
 
   async sendMessage(
     agentId: string,
+    userId: string,
     prompt: string,
   ): Promise<{ run: AgentRun; message: Message }> {
     if (!isArkConfigured(this.config)) {
@@ -160,6 +170,7 @@ export class AgentService {
         "Ark is not configured. Set ARK_API_KEY and ARK_MODEL, then restart.",
       );
     }
+    this.getAgent(agentId, userId);
     const timestamp = now();
     const runId = randomUUID();
     const run: AgentRun = {
@@ -186,6 +197,9 @@ export class AgentService {
       const storedAgent = database.agents.find((item) => item.id === agentId);
       if (!storedAgent) {
         throw new HttpError(404, "Agent not found");
+      }
+      if (storedAgent.ownerId !== userId) {
+        throw new HttpError(403, "You do not have access to this Agent");
       }
       if (storedAgent.status === "stopped") {
         throw new HttpError(409, "Start the Agent before sending a message");
@@ -295,11 +309,18 @@ export class AgentService {
     }
   }
 
-  private async setStatus(id: string, status: Agent["status"]): Promise<Agent> {
+  private async setStatus(
+    id: string,
+    userId: string,
+    status: Agent["status"],
+  ): Promise<Agent> {
     return this.store.mutate((database) => {
       const agent = database.agents.find((item) => item.id === id);
       if (!agent) {
         throw new HttpError(404, "Agent not found");
+      }
+      if (agent.ownerId !== userId) {
+        throw new HttpError(403, "You do not have access to this Agent");
       }
       if (status === "ready" && agent.status === "busy") {
         throw new HttpError(409, "Stop the active run before starting this Agent");

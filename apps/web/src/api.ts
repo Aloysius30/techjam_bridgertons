@@ -10,15 +10,21 @@ export class ApiError extends Error {
 }
 
 let authToken = "";
+let currentUserId = "user-a";
 
 export function setAuthToken(token: string): void {
   authToken = token.trim();
+}
+
+export function setCurrentUserId(userId: string): void {
+  currentUserId = userId;
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
   const headers = {
     ...(options?.body ? { "Content-Type": "application/json" } : {}),
     ...(authToken ? { Authorization: "Bearer " + authToken } : {}),
+    "x-user-id": currentUserId,
     ...options?.headers,
   };
   const response = await fetch(url, {

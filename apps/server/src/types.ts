@@ -4,6 +4,7 @@ export type MessageRole = "user" | "assistant";
 
 export interface Agent {
   id: string;
+  ownerId: string;
   name: string;
   description: string;
   instructions: string;
@@ -51,6 +52,7 @@ export interface Database {
 }
 
 export interface CreateAgentInput {
+  ownerId: string;
   name: string;
   description?: string | undefined;
   instructions?: string | undefined;

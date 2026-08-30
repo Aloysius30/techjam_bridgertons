@@ -1,6 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, ApiError, setAuthToken } from "./api";
+import { api, ApiError, setAuthToken, setCurrentUserId } from "./api";
 import type { Agent, AgentRun, Message, SystemInfo } from "./types";
+
+const mockUsers = [
+  { id: "user-a", label: "User A" },
+  { id: "user-b", label: "User B" },
+];
 
 const starterPrompts = [
   "Create a small TypeScript CLI that prints a weather summary from sample JSON.",
@@ -36,6 +41,7 @@ function Spinner() {
 }
 
 export default function App() {
+  const [currentUser, setCurrentUser] = useState(mockUsers[0]!.id);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -95,6 +101,16 @@ export default function App() {
       mountedRef.current = false;
     };
   }, [bootstrap]);
+
+  useEffect(() => {
+    setCurrentUserId(currentUser);
+    if (authRequired === false) {
+      setSelectedId(null);
+      void refreshAgents().catch((reason) =>
+        setError(reason instanceof Error ? reason.message : String(reason)),
+      );
+    }
+  }, [currentUser, authRequired, refreshAgents]);
 
   useEffect(() => {
     setActiveRun(null);
@@ -319,6 +335,19 @@ export default function App() {
                 : "ECS / Docker · Codex CLI"}
             </span>
           </div>
+        </div>
+
+        <div className="user-switcher" role="group" aria-label="Mock user">
+          {mockUsers.map((user) => (
+            <button
+              key={user.id}
+              className={"button " + (user.id === currentUser ? "button-primary" : "button-ghost")}
+              onClick={() => setCurrentUser(user.id)}
+              disabled={user.id === currentUser}
+            >
+              {user.label}
+            </button>
+          ))}
         </div>
 
         <button

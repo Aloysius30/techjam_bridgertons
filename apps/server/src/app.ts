@@ -8,6 +8,12 @@ import type { AppConfig } from "./config.js";
 import { HttpError } from "./errors.js";
 import type { AgentService } from "./agent-service.js";
 
+declare module "fastify" {
+  interface FastifyRequest {
+    userId?: string;
+  }
+}
+
 const agentIdParams = z.object({ id: z.string().uuid() });
 const runIdParams = z.object({ id: z.string().uuid() });
 const createAgentBody = z.object({
@@ -63,6 +69,18 @@ export async function createApp(
     }
   });
 
+  app.addHook("onRequest", async (request, reply) => {
+    if (!request.url.startsWith("/api/agents")) {
+      return;
+    }
+    const header = request.headers["x-user-id"];
+    const userId = Array.isArray(header) ? header[0] : header;
+    if (!userId) {
+      return reply.code(401).send({ error: "x-user-id header is required" });
+    }
+    request.userId = userId;
+  });
+
   app.get("/api/health", async () => ({
     ok: true,
     service: "volc-agent-launchpad",
@@ -72,54 +90,56 @@ export async function createApp(
 
   app.get("/api/system", async () => service.systemInfo());
 
-  app.get("/api/agents", async () => ({ agents: service.listAgents() }));
+  app.get("/api/agents", async (request) => ({
+    agents: service.listAgents(request.userId!),
+  }));
 
   app.post("/api/agents", async (request, reply) => {
     const body = createAgentBody.parse(request.body);
-    const agent = await service.createAgent(body);
+    const agent = await service.createAgent({ ...body, ownerId: request.userId! });
     return reply.code(201).send({ agent });
   });
 
   app.get("/api/agents/:id", async (request) => {
     const { id } = agentIdParams.parse(request.params);
-    return { agent: service.getAgent(id) };
+    return { agent: service.getAgent(id, request.userId!) };
   });
 
   app.patch("/api/agents/:id", async (request) => {
     const { id } = agentIdParams.parse(request.params);
     const body = updateAgentBody.parse(request.body);
-    return { agent: await service.updateAgent(id, body) };
+    return { agent: await service.updateAgent(id, request.userId!, body) };
   });
 
   app.delete("/api/agents/:id", async (request) => {
     const { id } = agentIdParams.parse(request.params);
-    return service.deleteAgent(id);
+    return service.deleteAgent(id, request.userId!);
   });
 
   app.post("/api/agents/:id/start", async (request) => {
     const { id } = agentIdParams.parse(request.params);
-    return { agent: await service.startAgent(id) };
+    return { agent: await service.startAgent(id, request.userId!) };
   });
 
   app.post("/api/agents/:id/stop", async (request) => {
     const { id } = agentIdParams.parse(request.params);
-    return { agent: await service.stopAgent(id) };
+    return { agent: await service.stopAgent(id, request.userId!) };
   });
 
   app.get("/api/agents/:id/messages", async (request) => {
     const { id } = agentIdParams.parse(request.params);
-    return { messages: service.getMessages(id) };
+    return { messages: service.getMessages(id, request.userId!) };
   });
 
   app.get("/api/agents/:id/runs", async (request) => {
     const { id } = agentIdParams.parse(request.params);
-    return { runs: service.getRuns(id) };
+    return { runs: service.getRuns(id, request.userId!) };
   });
 
   app.post("/api/agents/:id/messages", async (request, reply) => {
     const { id } = agentIdParams.parse(request.params);
     const body = messageBody.parse(request.body);
-    const result = await service.sendMessage(id, body.content);
+    const result = await service.sendMessage(id, request.userId!, body.content);
     return reply.code(202).send(result);
   });
 
