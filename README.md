@@ -149,8 +149,10 @@ npm run check
 
 ## Architecture
 
-See the diagram in this repo. Every request carries an `x-user-id` header. The
-Fastify hook checks it's present, `AgentService.getAgent(id, userId)` is the
-API-layer enforcement point, and when a Run actually executes,
-`container-codex-runner.ts` scopes the container's filesystem to that owner's data
-only. Every run and every denied access attempt gets recorded by `audit-logger.ts`.
+![Architecture diagram showing the three enforcement layers](docs/architecture.jpg)
+
+Every request carries an `x-user-id` header. The Fastify hook checks it's present,
+`AgentService.getAgent(id, userId)` is the API-layer enforcement point, and when a
+Run actually executes, `container-codex-runner.ts` scopes the container's filesystem
+to that owner's data only. Every run and every denied access attempt gets recorded by
+`audit-logger.ts`.
