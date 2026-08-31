@@ -2,6 +2,8 @@ import cors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import Fastify, { type FastifyInstance } from "fastify";
 import { timingSafeEqual } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import type { AppConfig } from "./config.js";
@@ -146,6 +148,24 @@ export async function createApp(
   app.get("/api/runs/:id", async (request) => {
     const { id } = runIdParams.parse(request.params);
     return { run: service.getRun(id) };
+  });
+
+  app.get("/api/audit", async (_request, reply) => {
+    try {
+      const logPath = path.join(config.dataDirectory, "audit.log");
+      const raw = await readFile(logPath, "utf-8").catch(() => "");
+      const entries = raw
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => {
+          try { return JSON.parse(line); } catch { return null; }
+        })
+        .filter(Boolean)
+        .slice(-100);
+      return { entries };
+    } catch (e) {
+      return reply.code(500).send({ error: "Failed to read audit log" });
+    }
   });
 
   if (config.nodeEnv === "production") {

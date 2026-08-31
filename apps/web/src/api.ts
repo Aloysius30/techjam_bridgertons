@@ -84,4 +84,5 @@ export const api = {
       },
     ),
   run: (id: string) => request<{ run: AgentRun }>("/api/runs/" + id),
+  audit: () => request<{ entries: any[] }>("/api/audit"),
 };

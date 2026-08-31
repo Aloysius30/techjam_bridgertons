@@ -76,10 +76,24 @@ export function buildContainerRunArgs(
     "HOME=/tmp",
     "--env",
     "NO_COLOR=1",
+    ...(request.ownerId
+      ? [
+          "--env",
+          "AGENT_OWNER=" + request.ownerId,
+          "--env",
+          "AGENT_IDENTITY=I am an AI Agent owned by " + request.ownerId + ". I can ONLY access files under /protected-data, which contains " + request.ownerId + "'s private data. I must NEVER attempt to access other users' data.",
+        ]
+      : []),
     "--mount",
     "type=bind,src=" + request.workspacePath + ",dst=/workspace",
     "--mount",
     "type=bind,src=" + config.codexHome + ",dst=/codex-home",
+    ...(request.ownerId
+      ? [
+          "--mount",
+          "type=bind,src=" + config.dataDirectory + "/protected-" + request.ownerId.replace(/ /g, "_") + ",dst=/protected-data,readonly",
+        ]
+      : []),
     "--workdir",
     "/workspace",
     config.containerRuntimeImage,
@@ -87,6 +101,7 @@ export function buildContainerRunArgs(
     ...buildCodexArgs(request, config.codexSandboxMode, "/workspace"),
   ];
 }
+
 
 export class ContainerCodexRunner implements AgentRunner {
   private readonly active = new Map<string, ActiveContainer>();

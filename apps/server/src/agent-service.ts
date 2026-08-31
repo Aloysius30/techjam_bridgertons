@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
+import { AuditLogger } from "./audit-logger.js";
 import type { AppConfig } from "./config.js";
 import { isArkConfigured } from "./config.js";
 import { HttpError, RunCancelledError } from "./errors.js";
@@ -18,17 +21,26 @@ const now = () => new Date().toISOString();
 export class AgentService {
   private readonly activeExecutions = new Map<string, Promise<void>>();
   private readonly cancellationRequests = new Set<string>();
+  private readonly auditLogger: AuditLogger;
 
   constructor(
     private readonly config: AppConfig,
     private readonly store: JsonStore,
     private readonly workspaces: WorkspaceManager,
     private readonly runner: AgentRunner,
-  ) {}
+  ) {
+    this.auditLogger = new AuditLogger(config.dataDirectory);
+  }
 
   async initialize(): Promise<void> {
+    await this.auditLogger.initialize();
     await this.store.initialize();
     await this.workspaces.initialize();
+
+    // Ensure mock protected data directories exist for demo
+    await mkdir(path.join(this.config.dataDirectory, "protected-user-a"), { recursive: true }).catch(() => {});
+    await mkdir(path.join(this.config.dataDirectory, "protected-user-b"), { recursive: true }).catch(() => {});
+
     await this.store.mutate((database) => {
       for (const run of database.runs) {
         if (run.status === "queued" || run.status === "running") {
@@ -59,6 +71,15 @@ export class AgentService {
       throw new HttpError(404, "Agent not found");
     }
     if (agent.ownerId !== userId) {
+      // Fire and forget audit log for the denied access attempt
+      this.auditLogger.log({
+        timestamp: now(),
+        event: "ACCESS_DENIED",
+        agentId: id,
+        ownerId: agent.ownerId,
+        detail: `Caller "${userId}" attempted to access agent owned by "${agent.ownerId}"`,
+      }).catch(console.error);
+
       throw new HttpError(403, "You do not have access to this Agent");
     }
     return agent;
@@ -247,6 +268,7 @@ export class AgentService {
   }
 
   private async executeRun(agentAtStart: Agent, run: AgentRun): Promise<void> {
+    const runStartMs = Date.now();
     await this.store.mutate((database) => {
       const storedRun = database.runs.find((item) => item.id === run.id);
       if (storedRun) {
@@ -254,6 +276,16 @@ export class AgentService {
         storedRun.startedAt = now();
       }
     });
+
+    await this.auditLogger.log({
+      timestamp: now(),
+      event: "RUN_STARTED",
+      agentId: agentAtStart.id,
+      ownerId: agentAtStart.ownerId,
+      runId: run.id,
+      promptPreview: run.prompt,
+    });
+
     try {
       if (this.cancellationRequests.has(agentAtStart.id)) {
         throw new RunCancelledError();
@@ -263,8 +295,21 @@ export class AgentService {
         workspacePath: agentAtStart.workspacePath,
         prompt: run.prompt,
         threadId: agentAtStart.codexThreadId,
+        ownerId: agentAtStart.ownerId,
       });
       const completedAt = now();
+      const durationMs = Date.now() - runStartMs;
+
+      await this.auditLogger.log({
+        timestamp: completedAt,
+        event: "RUN_COMPLETED",
+        agentId: agentAtStart.id,
+        ownerId: agentAtStart.ownerId,
+        runId: run.id,
+        tokensUsed: (result.usage?.inputTokens ?? 0) + (result.usage?.outputTokens ?? 0),
+        durationMs,
+      });
+
       await this.store.mutate((database) => {
         const storedRun = database.runs.find((item) => item.id === run.id);
         const agent = database.agents.find((item) => item.id === agentAtStart.id);
@@ -288,8 +333,20 @@ export class AgentService {
       });
     } catch (error) {
       const completedAt = now();
+      const durationMs = Date.now() - runStartMs;
       const cancelled = error instanceof RunCancelledError;
       const message = error instanceof Error ? error.message : String(error);
+
+      await this.auditLogger.log({
+        timestamp: completedAt,
+        event: cancelled ? "RUN_CANCELLED" : "RUN_FAILED",
+        agentId: agentAtStart.id,
+        ownerId: agentAtStart.ownerId,
+        runId: run.id,
+        durationMs,
+        detail: cancelled ? "User cancelled the run" : message,
+      });
+
       await this.store.mutate((database) => {
         const storedRun = database.runs.find((item) => item.id === run.id);
         const agent = database.agents.find((item) => item.id === agentAtStart.id);

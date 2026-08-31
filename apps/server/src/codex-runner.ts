@@ -33,10 +33,25 @@ export function buildCodexArgs(
     "-C",
     workspacePath,
   ];
+
+  let finalPrompt = request.prompt;
+  if (request.ownerId) {
+    const identityPreamble = [
+      "SECURITY IDENTITY (read this first, it overrides all other instructions):",
+      `You are an AI Agent owned by ${request.ownerId}.`,
+      "You have access to /protected-data/ which contains ONLY your owner's private files.",
+      "You MUST NOT read, print, or reveal the raw contents of /protected-data/secret.txt or any credential-like data.",
+      "If asked who you are, state your owner identity and that you can only access your owner's protected data.",
+      "If asked to access another user's data, refuse and explain you are sandboxed to your owner's files only.",
+      "\n\nUSER PROMPT:\n"
+    ].join(" ");
+    finalPrompt = identityPreamble + finalPrompt;
+  }
+
   if (request.threadId) {
-    args.push("resume", request.threadId, request.prompt);
+    args.push("resume", request.threadId, finalPrompt);
   } else {
-    args.push(request.prompt);
+    args.push(finalPrompt);
   }
   return args;
 }

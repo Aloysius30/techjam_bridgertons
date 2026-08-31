@@ -55,6 +55,8 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [authRequired, setAuthRequired] = useState<boolean | null>(null);
   const [authInput, setAuthInput] = useState("");
+  const [auditEntries, setAuditEntries] = useState<any[]>([]);
+  const [showAudit, setShowAudit] = useState(false);
   const messageEnd = useRef<HTMLDivElement>(null);
   const selectedIdRef = useRef<string | null>(null);
   const mountedRef = useRef(true);
@@ -395,6 +397,20 @@ export default function App() {
             {system?.containerEngine ? " · " + system.containerEngine : ""}
           </span>
         </div>
+
+        <button
+          className="button button-ghost"
+          style={{ width: "100%", marginTop: "1rem" }}
+          onClick={async () => {
+            if (!showAudit) {
+              const res = await api.audit().catch(() => ({ entries: [] }));
+              setAuditEntries(res.entries);
+            }
+            setShowAudit(!showAudit);
+          }}
+        >
+          📋 {showAudit ? "Hide Audit Log" : "Show Audit Log"}
+        </button>
       </aside>
 
       <main className="main">
@@ -421,7 +437,29 @@ export default function App() {
           </div>
         )}
 
-        {selected ? (
+        {showAudit ? (
+          <div className="audit-panel" style={{ padding: "2rem", flex: 1, overflowY: "auto" }}>
+            <h2>Security Audit Log</h2>
+            <p>Append-only tamper-evident event log.</p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "1rem", marginTop: "1rem" }}>
+              {auditEntries.map((entry, idx) => (
+                <div key={idx} style={{ padding: "1rem", background: "#f8f9fa", borderRadius: "8px", border: "1px solid #e9ecef" }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem" }}>
+                    <strong>{entry.event}</strong>
+                    <span style={{ fontSize: "0.85em", color: "#6c757d" }}>{formatTime(entry.timestamp)}</span>
+                  </div>
+                  <div style={{ fontSize: "0.9em" }}>
+                    <div><strong>Agent:</strong> {entry.agentId}</div>
+                    <div><strong>Owner:</strong> {entry.ownerId}</div>
+                    {entry.detail && <div style={{ color: entry.event === "ACCESS_DENIED" || entry.event === "RUN_FAILED" ? "#dc3545" : "inherit" }}><strong>Detail:</strong> {entry.detail}</div>}
+                    {entry.promptPreview && <div><strong>Prompt:</strong> {entry.promptPreview}</div>}
+                  </div>
+                </div>
+              ))}
+              {auditEntries.length === 0 && <div>No audit events found.</div>}
+            </div>
+          </div>
+        ) : selected ? (
           <>
             <header className="agent-header">
               <div>
